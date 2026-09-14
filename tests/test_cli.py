@@ -1,5 +1,8 @@
+import io
+import os
+
 import httpx
-import yaml
+import pytest
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate
 
@@ -11,10 +14,25 @@ from tests.conftest import FakeLLM
 _EMPTY_WWR_RSS = '<?xml version="1.0"?><rss version="2.0"><channel><title>WWR</title></channel></rss>'
 
 
-def _make_cv_pdf(path):
-    doc = SimpleDocTemplate(str(path))
+@pytest.fixture
+def pg_url():
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("TEST_DATABASE_URL not set - skipping tests that need a real Postgres instance.")
+    conn = db.get_connection(url)
+    conn.execute("TRUNCATE TABLE jobs")
+    conn.execute("TRUNCATE TABLE profile")
+    conn.commit()
+    conn.close()
+    return url
+
+
+def _fake_cv_bytes() -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer)
     styles = getSampleStyleSheet()
     doc.build([Paragraph("Experienced backend engineer.", styles["Normal"])])
+    return buffer.getvalue()
 
 
 def _remotive_raw(job_id: int, title: str) -> dict:
@@ -46,22 +64,20 @@ def _multi_source_client(remotive_jobs=()) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-def _setup(tmp_path, *, role_titles=None):
-    cv_path = tmp_path / "CV.pdf"
-    _make_cv_pdf(cv_path)
-
-    preferences_path = tmp_path / "preferences.yaml"
-    preferences = {"min_strong_matches": 1}
-    if role_titles is not None:
-        preferences["role_titles"] = role_titles
-    preferences_path.write_text(yaml.safe_dump(preferences))
-
-    db_path = tmp_path / "jobs.db"
-    return cv_path, preferences_path, db_path
+def _seed_profile(url: str, *, role_titles=None) -> None:
+    conn = db.get_connection(url)
+    try:
+        db.save_cv_bytes(conn, _fake_cv_bytes())
+        preferences = {}
+        if role_titles is not None:
+            preferences["role_titles"] = role_titles
+        db.save_preferences(conn, preferences)
+    finally:
+        conn.close()
 
 
-def test_run_without_callback_uses_invoke_and_persists_to_db(tmp_path):
-    cv_path, preferences_path, db_path = _setup(tmp_path)
+def test_run_without_callback_uses_invoke_and_persists_to_db(pg_url):
+    _seed_profile(pg_url)
     llm = FakeLLM(
         {
             QueryList: QueryList(queries=["backend"]),
@@ -71,9 +87,7 @@ def test_run_without_callback_uses_invoke_and_persists_to_db(tmp_path):
     http_client = _multi_source_client(remotive_jobs=[_remotive_raw(1, "Backend Engineer")])
 
     ranked = cli.run(
-        cv_path=cv_path,
-        preferences_path=preferences_path,
-        db_path=db_path,
+        database_url=pg_url,
         min_strong_matches=1,
         max_iterations=2,
         llm=llm,
@@ -84,12 +98,18 @@ def test_run_without_callback_uses_invoke_and_persists_to_db(tmp_path):
     assert len(ranked) == 1
     assert ranked[0].match_score == 90
 
-    conn = db.get_connection(db_path)
+    conn = db.get_connection(pg_url)
     assert len(db.list_jobs(conn)) == 1
 
 
-def test_run_with_callback_reports_every_node_and_matches_invoke_result(tmp_path):
-    cv_path, preferences_path, db_path = _setup(tmp_path)
+def test_run_raises_clear_error_without_cv(pg_url):
+    # pg_url fixture truncates profile too, so no CV has been seeded here.
+    with pytest.raises(RuntimeError, match="No CV on file"):
+        cli.run(database_url=pg_url, llm=FakeLLM(QueryList(queries=[])))
+
+
+def test_run_with_callback_reports_every_node_and_matches_invoke_result(pg_url):
+    _seed_profile(pg_url)
     http_client = _multi_source_client(remotive_jobs=[_remotive_raw(1, "Backend Engineer")])
     llm = FakeLLM(
         {
@@ -100,9 +120,7 @@ def test_run_with_callback_reports_every_node_and_matches_invoke_result(tmp_path
 
     seen_nodes = []
     ranked = cli.run(
-        cv_path=cv_path,
-        preferences_path=preferences_path,
-        db_path=db_path,
+        database_url=pg_url,
         min_strong_matches=1,
         max_iterations=2,
         llm=llm,
@@ -116,8 +134,8 @@ def test_run_with_callback_reports_every_node_and_matches_invoke_result(tmp_path
     assert ranked[0].match_score == 90
 
 
-def test_run_respects_notify_false(tmp_path, monkeypatch):
-    cv_path, preferences_path, db_path = _setup(tmp_path)
+def test_run_respects_notify_false(pg_url, monkeypatch):
+    _seed_profile(pg_url)
     http_client = _multi_source_client(remotive_jobs=[_remotive_raw(1, "Backend Engineer")])
     llm = FakeLLM(
         {
@@ -130,9 +148,7 @@ def test_run_respects_notify_false(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "send_digest", lambda jobs: calls.append(jobs))
 
     cli.run(
-        cv_path=cv_path,
-        preferences_path=preferences_path,
-        db_path=db_path,
+        database_url=pg_url,
         min_strong_matches=1,
         llm=llm,
         http_client=http_client,
@@ -142,8 +158,8 @@ def test_run_respects_notify_false(tmp_path, monkeypatch):
     assert calls == []
 
 
-def test_run_calls_send_digest_when_notify_true(tmp_path, monkeypatch):
-    cv_path, preferences_path, db_path = _setup(tmp_path)
+def test_run_calls_send_digest_when_notify_true(pg_url, monkeypatch):
+    _seed_profile(pg_url)
     http_client = _multi_source_client(remotive_jobs=[_remotive_raw(1, "Backend Engineer")])
     llm = FakeLLM(
         {
@@ -156,9 +172,7 @@ def test_run_calls_send_digest_when_notify_true(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "send_digest", lambda jobs: calls.append(jobs))
 
     cli.run(
-        cv_path=cv_path,
-        preferences_path=preferences_path,
-        db_path=db_path,
+        database_url=pg_url,
         min_strong_matches=1,
         llm=llm,
         http_client=http_client,

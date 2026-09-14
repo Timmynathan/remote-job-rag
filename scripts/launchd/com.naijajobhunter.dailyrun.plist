@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.naijajobhunter.dailyrun</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/timmyilesanmi/Desktop/remote-job-rag/scripts/run_daily.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/timmyilesanmi/Desktop/remote-job-rag</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/timmyilesanmi/Desktop/remote-job-rag/logs/daily-run.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/timmyilesanmi/Desktop/remote-job-rag/logs/daily-run.err.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

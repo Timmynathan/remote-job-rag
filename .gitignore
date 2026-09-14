@@ -1,41 +1,25 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-/node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
 
 # testing
+.pytest_cache/
 /coverage
 
-# next.js
-/.next/
-/out/
+# env files
+.env
+.env.*
+!.env.example
 
-# production
-/build
+# personal data — never commit your CV or the local job database
+config/CV.pdf
+data/*.db
+
+# scheduled-run logs
+logs/
 
 # misc
 .DS_Store
 *.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts

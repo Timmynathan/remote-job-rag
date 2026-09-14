@@ -1,0 +1,20 @@
+[theme]
+base = "light"
+primaryColor = "#6B46C1"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8FAFC"
+textColor = "#0F172A"
+borderColor = "#E2E8F0"
+font = "\"Plus Jakarta Sans\", -apple-system, \"system-ui\", \"Segoe UI\", Roboto, \"Helvetica Neue\", Arial, \"Noto Sans\", sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\""
+baseFontWeight = 500
+baseRadius = "0.75rem"
+buttonRadius = "0.5rem"
+showWidgetBorder = false
+violetColor = "#6B46C1"
+
+[theme.sidebar]
+backgroundColor = "#6B46C1"
+secondaryBackgroundColor = "#7C5CD6"
+textColor = "#FFFFFF"
+primaryColor = "#FFFFFF"
+borderColor = "rgba(255,255,255,0.25)"

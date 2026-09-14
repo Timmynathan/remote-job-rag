@@ -13,6 +13,7 @@ dependencies = [
     "langchain-google-genai>=4.3.3",
     "langgraph>=1.2.10",
     "playwright>=1.62.0",
+    "psycopg[binary]>=3.3.5",
     "pydantic>=2.13.4",
     "pypdf>=6.15.0",
     "python-dotenv>=1.2.2",

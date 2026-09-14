@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from datetime import date
 from html import escape
@@ -12,16 +13,30 @@ from pathlib import Path
 # of the .pth file's state.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-import yaml
 import streamlit as st
 from dotenv import load_dotenv
 
 from job_hunter import db
-from job_hunter.cli import DEFAULT_CV_PATH, DEFAULT_DB_PATH, DEFAULT_PREFERENCES_PATH
 from job_hunter.cli import run as run_agent
 from job_hunter.pdf_export import export_jobs_to_pdf
 
 load_dotenv()
+
+# Streamlit Community Cloud's secrets manager populates st.secrets, not
+# os.environ - but the rest of this codebase (cli.py, notify.py, the LLM/
+# search clients) all read os.environ via os.environ.get(...) / SDK defaults.
+# Locally this is a no-op (no secrets.toml, nothing to copy); on Cloud it
+# bridges the platform's secrets into the same interface everything else
+# already expects, so nothing else needs to change for either environment.
+for _key, _value in st.secrets.items():
+    os.environ.setdefault(_key, str(_value))
+
+if not os.environ.get("DATABASE_URL"):
+    st.error(
+        "DATABASE_URL isn't set. Add it to `.env` locally, or as a secret on your "
+        "hosting platform - see README.md."
+    )
+    st.stop()
 
 st.set_page_config(page_title="My Job Hunter", page_icon=":material/work:", layout="wide")
 
@@ -40,19 +55,7 @@ _STATUS_OPTIONS = ["reviewed", "applied", "dismissed"]
 
 
 def get_conn():
-    DEFAULT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    return db.get_connection(DEFAULT_DB_PATH)
-
-
-def load_preferences() -> dict:
-    if DEFAULT_PREFERENCES_PATH.exists():
-        return yaml.safe_load(DEFAULT_PREFERENCES_PATH.read_text()) or {}
-    return {}
-
-
-def save_preferences(preferences: dict) -> None:
-    DEFAULT_PREFERENCES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    DEFAULT_PREFERENCES_PATH.write_text(yaml.safe_dump(preferences, sort_keys=False))
+    return db.get_connection(os.environ["DATABASE_URL"])
 
 
 def score_color(score: int | None) -> str:
@@ -121,17 +124,17 @@ st.divider()
 with st.sidebar:
     st.markdown("### :material/work: My Job Hunter")
 
-    with st.expander("CV & Preferences", expanded=not DEFAULT_CV_PATH.exists(), icon=":material/tune:"):
+    existing_cv_bytes = db.get_cv_bytes(conn)
+    with st.expander("CV & Preferences", expanded=existing_cv_bytes is None, icon=":material/tune:"):
         st.caption(
-            "Saving here overwrites config/CV.pdf and config/preferences.yaml directly "
-            "(hand-added YAML comments won't survive a save)."
+            "Saved here goes straight into the shared database - your local agent "
+            "runs and this dashboard (wherever it's hosted) both read the same CV/preferences."
         )
-        prefs = load_preferences()
+        prefs = db.get_preferences(conn)
 
         st.markdown("**CV**")
-        if DEFAULT_CV_PATH.exists():
-            size_kb = DEFAULT_CV_PATH.stat().st_size / 1024
-            st.caption(f"Current CV on file: {size_kb:.0f} KB")
+        if existing_cv_bytes is not None:
+            st.caption(f"Current CV on file: {len(existing_cv_bytes) / 1024:.0f} KB")
         else:
             st.caption("No CV on file yet.")
         uploaded_cv = st.file_uploader("Upload CV (PDF)", type=["pdf"])
@@ -169,10 +172,10 @@ with st.sidebar:
 
         if st.button("Save CV & Preferences", width="stretch", icon=":material/save:"):
             if uploaded_cv is not None:
-                DEFAULT_CV_PATH.parent.mkdir(parents=True, exist_ok=True)
-                DEFAULT_CV_PATH.write_bytes(uploaded_cv.getvalue())
+                db.save_cv_bytes(conn, uploaded_cv.getvalue(), filename=uploaded_cv.name)
 
-            save_preferences(
+            db.save_preferences(
+                conn,
                 {
                     "role_titles": [line.strip() for line in role_titles_text.splitlines() if line.strip()],
                     "seniority": seniority.strip(),
@@ -182,7 +185,7 @@ with st.sidebar:
                     "exclude_title_keywords": [
                         line.strip() for line in exclude_keywords_text.splitlines() if line.strip()
                     ],
-                }
+                },
             )
             st.success("Saved.")
             st.rerun()
@@ -222,7 +225,7 @@ with st.sidebar:
 
     st.markdown("### :material/tune: Filters")
     status_filter = st.selectbox("Status", ["All", "new", "reviewed", "applied", "dismissed"])
-    sources = [row["source"] for row in conn.execute("SELECT DISTINCT source FROM jobs ORDER BY source")]
+    sources = db.distinct_sources(conn)
     source_filter = st.selectbox("Source", ["All", *sources])
     min_score = st.slider("Minimum match score", 0, 100, 0)
     sort_choice = st.selectbox(

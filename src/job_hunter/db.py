@@ -1,30 +1,42 @@
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Sequence
-from pathlib import Path
+
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from job_hunter.models import Job
 
-_SCHEMA = """
+_JOBS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     job_id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     company TEXT NOT NULL,
     location TEXT,
     remote_type TEXT NOT NULL DEFAULT 'unclear',
-    nigeria_eligible INTEGER,
-    salary_min REAL,
-    salary_max REAL,
+    nigeria_eligible BOOLEAN,
+    salary_min DOUBLE PRECISION,
+    salary_max DOUBLE PRECISION,
     salary_currency TEXT,
-    posted_date TEXT,
+    posted_date DATE,
     source TEXT NOT NULL,
     url TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    still_open INTEGER,
+    still_open BOOLEAN,
     match_score INTEGER,
     match_reason TEXT,
     status TEXT NOT NULL DEFAULT 'new'
+);
+"""
+
+_PROFILE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS profile (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    cv_bytes BYTEA,
+    cv_filename TEXT,
+    preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 """
 
@@ -47,28 +59,23 @@ _UPDATABLE_COLUMNS = [
 ]
 
 
-def get_connection(db_path: str | Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute(_SCHEMA)
+def get_connection(database_url: str) -> psycopg.Connection:
+    conn = psycopg.connect(database_url, row_factory=dict_row, autocommit=False)
+    conn.execute(_JOBS_SCHEMA)
+    conn.execute(_PROFILE_SCHEMA)
+    conn.commit()
     return conn
 
 
 def _job_to_row(job: Job) -> dict:
-    row = job.model_dump(mode="json")
-    row["nigeria_eligible"] = job.nigeria_eligible if job.nigeria_eligible is None else int(job.nigeria_eligible)
-    row["still_open"] = job.still_open if job.still_open is None else int(job.still_open)
-    return row
+    return job.model_dump()
 
 
-def _row_to_job(row: sqlite3.Row) -> Job:
-    data = dict(row)
-    data["nigeria_eligible"] = data["nigeria_eligible"] if data["nigeria_eligible"] is None else bool(data["nigeria_eligible"])
-    data["still_open"] = data["still_open"] if data["still_open"] is None else bool(data["still_open"])
-    return Job.model_validate(data)
+def _row_to_job(row: dict) -> Job:
+    return Job.model_validate(dict(row))
 
 
-def upsert_job(conn: sqlite3.Connection, job: Job) -> None:
+def upsert_job(conn: psycopg.Connection, job: Job) -> None:
     """Insert a job, or update it while preserving its existing `status`.
 
     `status` tracks your own review decisions (applied/dismissed/reviewed) and
@@ -77,26 +84,26 @@ def upsert_job(conn: sqlite3.Connection, job: Job) -> None:
     """
     row = _job_to_row(job)
     columns = ["job_id", "status", *_UPDATABLE_COLUMNS]
-    placeholders = ", ".join(f":{c}" for c in columns)
-    update_clause = ", ".join(f"{c} = :{c}" for c in _UPDATABLE_COLUMNS)
+    placeholders = ", ".join(f"%({c})s" for c in columns)
+    update_clause = ", ".join(f"{c} = %({c})s" for c in _UPDATABLE_COLUMNS)
     conn.execute(
         f"""
         INSERT INTO jobs ({", ".join(columns)})
         VALUES ({placeholders})
-        ON CONFLICT(job_id) DO UPDATE SET {update_clause}
+        ON CONFLICT (job_id) DO UPDATE SET {update_clause}
         """,
         row,
     )
     conn.commit()
 
 
-def upsert_jobs(conn: sqlite3.Connection, jobs: Sequence[Job]) -> None:
+def upsert_jobs(conn: psycopg.Connection, jobs: Sequence[Job]) -> None:
     for job in jobs:
         upsert_job(conn, job)
 
 
-def get_job(conn: sqlite3.Connection, job_id: str) -> Job | None:
-    row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+def get_job(conn: psycopg.Connection, job_id: str) -> Job | None:
+    row = conn.execute("SELECT * FROM jobs WHERE job_id = %s", (job_id,)).fetchone()
     return _row_to_job(row) if row else None
 
 
@@ -104,7 +111,7 @@ _SORTABLE_COLUMNS = {"match_score", "source", "posted_date", "company", "title"}
 
 
 def list_jobs(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     *,
     status: str | None = None,
     source: str | None = None,
@@ -120,19 +127,72 @@ def list_jobs(
     query = "SELECT * FROM jobs WHERE 1=1"
     params: list = []
     if status is not None:
-        query += " AND status = ?"
+        query += " AND status = %s"
         params.append(status)
     if source is not None:
-        query += " AND source = ?"
+        query += " AND source = %s"
         params.append(source)
     if min_score is not None:
-        query += " AND match_score >= ?"
+        query += " AND match_score >= %s"
         params.append(min_score)
     query += f" ORDER BY {order_by}"
     rows = conn.execute(query, params).fetchall()
     return [_row_to_job(row) for row in rows]
 
 
-def update_status(conn: sqlite3.Connection, job_id: str, status: str) -> None:
-    conn.execute("UPDATE jobs SET status = ? WHERE job_id = ?", (status, job_id))
+def update_status(conn: psycopg.Connection, job_id: str, status: str) -> None:
+    conn.execute("UPDATE jobs SET status = %s WHERE job_id = %s", (status, job_id))
+    conn.commit()
+
+
+def distinct_sources(conn: psycopg.Connection) -> list[str]:
+    rows = conn.execute("SELECT DISTINCT source FROM jobs ORDER BY source").fetchall()
+    return [row["source"] for row in rows]
+
+
+# --- CV + preferences: single shared "profile" row, so local agent runs and
+# the hosted dashboard both read/write the exact same data (project-about.md
+# §4/§9). ---
+
+
+def get_cv_bytes(conn: psycopg.Connection) -> bytes | None:
+    row = conn.execute("SELECT cv_bytes FROM profile WHERE id = 'default'").fetchone()
+    if not row or row["cv_bytes"] is None:
+        return None
+    return bytes(row["cv_bytes"])
+
+
+def save_cv_bytes(conn: psycopg.Connection, cv_bytes: bytes, *, filename: str | None = None) -> None:
+    conn.execute(
+        """
+        INSERT INTO profile (id, cv_bytes, cv_filename)
+        VALUES ('default', %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+            cv_bytes = EXCLUDED.cv_bytes,
+            cv_filename = EXCLUDED.cv_filename,
+            updated_at = now()
+        """,
+        (cv_bytes, filename),
+    )
+    conn.commit()
+
+
+def get_preferences(conn: psycopg.Connection) -> dict:
+    row = conn.execute("SELECT preferences FROM profile WHERE id = 'default'").fetchone()
+    if not row or row["preferences"] is None:
+        return {}
+    return row["preferences"]
+
+
+def save_preferences(conn: psycopg.Connection, preferences: dict) -> None:
+    conn.execute(
+        """
+        INSERT INTO profile (id, preferences)
+        VALUES ('default', %s)
+        ON CONFLICT (id) DO UPDATE SET
+            preferences = EXCLUDED.preferences,
+            updated_at = now()
+        """,
+        (Jsonb(preferences),),
+    )
     conn.commit()

@@ -14,7 +14,7 @@ Remote listings for Nigeria-based candidates are scattered across job boards wit
 4. Scores each surviving posting against your CV using an LLM, with reasoning
 5. Refines the search once more if too few strong matches came back, then finalizes a ranked shortlist
 
-Results persist in a local database, so re-runs are incremental — you never re-review the same posting twice.
+Results, your CV, and your preferences all live in a shared Postgres database — so a local scheduled run and a dashboard deployed anywhere both read/write the exact same data, and re-runs are incremental (you never re-review the same posting twice).
 
 ## Data sources
 
@@ -28,7 +28,7 @@ Planned, not yet built: LinkedIn/Indeed/Glassdoor (via Tavily search + Playwrigh
 - **LLM**: Google Gemini (`langchain-google-genai`)
 - **HTTP**: httpx
 - **Data validation**: Pydantic
-- **Storage**: SQLite
+- **Storage**: Postgres (Neon) — jobs, CV bytes, and preferences all live here, shared between local runs and any hosted dashboard
 - **UI**: Streamlit
 - **PDF export**: reportlab
 - **Email digest**: Resend
@@ -46,11 +46,13 @@ Fill in `.env`:
 
 | Variable | Required for |
 |---|---|
+| `DATABASE_URL` | Postgres connection string — get one free from [neon.tech](https://neon.tech): sign up, create a project, copy the connection string from the dashboard |
+| `TEST_DATABASE_URL` | A second Postgres URL (a separate free Neon project works well) used only by the test suite — truncated before every test run, so never point this at your real data |
 | `GOOGLE_API_KEY` | Gemini (query generation + scoring) |
 | `TAVILY_API_KEY` | Reserved for planned LinkedIn/Indeed discovery — not used yet |
 | `RESEND_API_KEY` / `DIGEST_TO_EMAIL` / `DIGEST_FROM_EMAIL` | Email digest after each run |
 
-Then drop your CV at `config/CV.pdf` and edit `config/preferences.yaml` (target roles, seniority, salary floor, experience level, excluded keywords) — or do both through the dashboard instead.
+Then upload your CV and set your preferences (target roles, seniority, salary floor, experience level, excluded keywords) through the dashboard's "CV & Preferences" panel — both are stored in Postgres, not local files, so this only needs doing once no matter where you run the dashboard from.
 
 ## Running it
 
@@ -73,7 +75,7 @@ Flags: `--min-strong-matches`, `--max-iterations`, `--max-candidates-to-score`, 
 ```bash
 uv run pytest tests/ -v
 ```
-123 tests, all offline — LLM and HTTP calls are dependency-injected with fakes, so nothing hits a real API during testing.
+LLM and HTTP calls are dependency-injected with fakes, so nothing hits a real API during testing. Database tests need `TEST_DATABASE_URL` set (see Setup above) — they skip cleanly if it's absent, rather than failing.
 
 **Known quirk**: `uv`'s editable install occasionally marks its generated `.pth` file with the macOS "hidden" file flag, which Python's `site.py` silently skips — this shows up as `ModuleNotFoundError: No module named 'job_hunter'` on the CLI (the dashboard is immune to it; pytest is too, via `pythonpath` config). Fix:
 ```bash
@@ -88,14 +90,13 @@ src/job_hunter/
 ├── nodes/               # generate_queries, retrieve, validate_dedupe, score, refine
 ├── sources/              # one module per job board API
 ├── models.py            # Job schema
-├── db.py                # SQLite persistence
+├── db.py                # Postgres persistence (jobs, CV bytes, preferences)
 ├── cv_parser.py          # PDF text extraction
 ├── notify.py             # Resend email digest
 ├── pdf_export.py          # Shortlist → PDF
 └── cli.py                # Entrypoint
 
 dashboard/app.py        # Streamlit UI
-config/                 # Your CV + preferences (gitignored where personal)
 scripts/                 # launchd scheduling
-tests/                   # 123 tests, fully offline
+tests/                   # offline except db.py tests (need TEST_DATABASE_URL)
 ```

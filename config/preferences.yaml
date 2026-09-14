@@ -1,0 +1,25 @@
+# Edit these to match what you're actually looking for.
+# generate_queries reads this alongside your CV to build search queries, and
+# validate_dedupe uses role_titles / exclude_title_keywords / nigeria_required
+# to drop postings that don't fit before they ever reach LLM scoring.
+role_titles:
+  - Full Stack Engineer
+  - Frontend Engineer
+  - Backend Engineer
+  - AI Engineer
+seniority: junior
+# Your CV may state more years than this - this field corrects that for the
+# agent's own reasoning (query generation + scoring) without editing the CV.
+actual_years_experience: 2
+salary_floor_usd: 60000
+nigeria_required: true
+exclude_title_keywords:
+  - senior
+  - sr.
+  - staff
+  - principal
+  - lead
+  - director
+  - head of
+  - vp
+  - chief

@@ -1,26 +1,24 @@
 # My Job Hunter
 
-A solo, on-demand AI agent that hunts remote job postings open to Nigeria-based candidates, scores them against your CV, and hands you a ranked shortlist — not a hosted product, a tool you run for yourself.
+A solo, on-demand AI agent that hunts remote job postings open to Nigeria-based candidates, scores them against my CV, and hands me a ranked shortlist.
 
 Full design rationale, architecture decisions, and roadmap live in [`project-about.md`](./project-about.md). This README is the practical "how do I run it" reference.
 
 ## What it does
 
-Remote listings for Nigeria-based candidates are scattered across job boards with wildly inconsistent APIs. This project runs a small agent graph that:
+Remote listings for Nigeria-based candidates, like myself, are scattered across job boards with wildly inconsistent APIs. This project runs a small agent graph that:
 
-1. Generates targeted search queries from your CV + stated preferences
+1. Generates targeted search queries from my CV + stated preferences
 2. Pulls postings from 6 free job-board APIs in parallel
-3. Filters out anything that doesn't match your target roles, is above your seniority ceiling, or isn't genuinely open to Nigeria-based candidates
-4. Scores each surviving posting against your CV using an LLM, with reasoning
+3. Filters out anything that doesn't match my target roles, is above my seniority ceiling, or isn't genuinely open to Nigeria-based candidates
+4. Scores each surviving posting against my CV using an LLM, with reasoning
 5. Refines the search once more if too few strong matches came back, then finalizes a ranked shortlist
 
-Results, your CV, and your preferences all live in a shared Postgres database — so a local scheduled run and a dashboard deployed anywhere both read/write the exact same data, and re-runs are incremental (you never re-review the same posting twice).
+Results, my CV, and my preferences all live in a shared Postgres database, so a local scheduled run and a dashboard deployed anywhere both read/write the exact same data, and re-runs are incremental (I never re-review the same posting twice).
 
 ## Data sources
 
 Currently live: **Remotive, Arbeitnow, Jobicy, RemoteOK, Himalayas, We Work Remotely**.
-
-Planned, not yet built: LinkedIn/Indeed/Glassdoor (via Tavily search + Playwright liveness checks) and direct Greenhouse/Lever pulls. See `project-about.md` §3 for the reasoning and compliance notes.
 
 ## Tech stack
 
